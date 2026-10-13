@@ -2,12 +2,13 @@
 
 AutoDox AI is a secure, privacy-first Chrome Extension (Manifest V3) for intelligent document processing and real-time form autofill. 
 
-This repository delivers the **robust architectural foundation** of the extension:
+This repository delivers the **robust architectural foundation and intelligent autofill engine** of the extension:
 - **Manifest V3** compliant configuration with minimal permissions (`storage`, `activeTab`).
-- **React + Vite** powered popup and options interfaces.
-- **Isolated Content Script** with strict standby privacy (never reads or transmits webpage contents automatically).
-- **Background Service Worker** for extension lifecycle management and encrypted local storage initialization.
-- **Deep Blue & White** modern UI design system.
+- **Real-Time Semantic Form Autofill Engine**: Client-side heuristic matcher (`src/utils/fieldMatcher.js`) supporting synonyms, autocompletes, label inference, and smart decomposition (e.g. splitting Full Legal Name into First/Last name).
+- **React & Framework DOM Compatibility**: Sets native prototype property descriptors and triggers synthetic `focus`, `input`, `change`, and `blur` events for modern single-page applications.
+- **In-Page Visual Feedback & Undo History**: Live field outlines, subtle emerald green success pulses, in-page toast feedback, and one-click undo restoration.
+- **Interactive Test Form Page**: Bundled `demo-form.html` testbed with realistic Job Application and KYC Identity forms for live demonstration.
+- **React + Vite** powered popup and options interfaces with Deep Blue & White modern UI design system.
 
 ---
 
@@ -104,6 +105,9 @@ This compiles:
 6. Click **Select Folder**.
 7. **AutoDox AI** will appear in your extensions list.
 8. Click the puzzle icon in Chrome's toolbar and pin **AutoDox AI** to test the popup interface.
+9. Open the interactive test form in Chrome:
+   - Click the **"Test Form"** button inside the AutoDox AI popup (Autofill tab), or navigate directly to `file:///c:/Users/gadeg/hackothon%20(2)/dist/demo-form.html` (or `http://localhost:5173/demo-form.html` if running `npm run dev`).
+10. In the AutoDox popup, click **"Scan & Match Form Fields"**, review the matched attributes, and click **"Autofill Matched Fields"** to watch the inputs fill instantly!
 
 ---
 

@@ -1,26 +1,47 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Wand2, 
   Globe, 
   CheckCircle2, 
   AlertCircle, 
-  ShieldAlert, 
-  ToggleLeft, 
-  ToggleRight, 
   RefreshCw,
-  SearchCode
+  SearchCode,
+  Zap,
+  RotateCcw,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  ShieldCheck,
+  ToggleLeft,
+  ToggleRight,
+  SlidersHorizontal,
+  FileCheck2
 } from 'lucide-react';
 
-export default function AutofillAssistantView() {
+export default function AutofillAssistantView({ vaultDocuments = [] }) {
   const [activeTabInfo, setActiveTabInfo] = useState({ title: '', url: '', domain: 'Current Webpage' });
   const [contentScriptStatus, setContentScriptStatus] = useState('checking'); // checking | connected | standby
-  const [formFieldInspection, setFormFieldInspection] = useState(null);
   const [isInspecting, setIsInspecting] = useState(false);
+  const [inspectionResult, setInspectionResult] = useState(null);
+  const [mappings, setMappings] = useState([]);
+  const [hasAutofilled, setHasAutofilled] = useState(false);
+  const [autofillStatus, setAutofillStatus] = useState(null); // { type: 'success' | 'error', message: '' }
+  const [showUnmatched, setShowUnmatched] = useState(false);
 
   // Assistant safety toggles
-  const [requireConfirm, setRequireConfirm] = useState(true);
   const [highlightInputs, setHighlightInputs] = useState(true);
+  const [requireConfirm, setRequireConfirm] = useState(true);
   const [excludeSensitive, setExcludeSensitive] = useState(true);
+
+  // Flatten all vault fields
+  const flatVaultAttributes = useMemo(() => {
+    return vaultDocuments.flatMap((doc) =>
+      (doc.fields || []).map((f) => ({
+        ...f,
+        docName: doc.name
+      }))
+    );
+  }, [vaultDocuments]);
 
   // Check connection to active tab
   const checkActiveTabConnection = () => {
@@ -35,10 +56,10 @@ export default function AutofillAssistantView() {
 
         const tab = tabs[0];
         try {
-          const domain = new URL(tab.url || '').hostname;
-          setActiveTabInfo({ title: tab.title || 'Tab', url: tab.url, domain });
+          const domain = new URL(tab.url || '').hostname || 'Local Webpage';
+          setActiveTabInfo({ title: tab.title || 'Tab', url: tab.url, domain, tabId: tab.id });
         } catch (e) {
-          setActiveTabInfo({ title: 'Current Tab', url: '', domain: 'Active Tab' });
+          setActiveTabInfo({ title: 'Current Tab', url: '', domain: 'Active Tab', tabId: tab.id });
         }
 
         // Send ping to content script
@@ -52,7 +73,7 @@ export default function AutofillAssistantView() {
       });
     } else {
       // Mock for browser testing
-      setActiveTabInfo({ title: 'Application Form Demo', url: '', domain: 'example.com' });
+      setActiveTabInfo({ title: 'Application Form Demo', url: '', domain: 'demo.autodox.local' });
       setContentScriptStatus('connected');
     }
   };
@@ -61,42 +82,245 @@ export default function AutofillAssistantView() {
     checkActiveTabConnection();
   }, []);
 
-  const handleTestFieldInspection = () => {
+  // Inspect page form fields & match against Vault attributes
+  const handleInspectAndMatch = () => {
     setIsInspecting(true);
+    setAutofillStatus(null);
 
     if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs || tabs.length === 0) {
           setIsInspecting(false);
+          setAutofillStatus({ type: 'error', message: 'No active tab found' });
           return;
         }
 
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'AUTODOX_INSPECT_FORM_FIELDS' }, (response) => {
-          setIsInspecting(false);
-          if (chrome.runtime.lastError || !response) {
-            setFormFieldInspection({ count: 0, error: 'Content script not injected or page restricted.' });
-          } else {
-            setFormFieldInspection(response);
+        const tabId = tabs[0].id;
+        chrome.tabs.sendMessage(
+          tabId,
+          {
+            type: 'AUTODOX_INSPECT_AND_MATCH',
+            vaultAttributes: flatVaultAttributes,
+            highlightImmediately: highlightInputs
+          },
+          (response) => {
+            setIsInspecting(false);
+            if (chrome.runtime.lastError || !response || response.status !== 'SUCCESS') {
+              setContentScriptStatus('standby');
+              setAutofillStatus({
+                type: 'error',
+                message: 'Could not connect to page. Reload the tab and try again.'
+              });
+            } else {
+              setInspectionResult(response);
+              setMappings(response.matchedMappings || []);
+            }
           }
-        });
+        );
       });
     } else {
+      // Mock for local dev testing
       setTimeout(() => {
         setIsInspecting(false);
-        setFormFieldInspection({
+        const mockMappings = [
+          {
+            autodoxId: 'ad_mock_1',
+            fieldLabel: 'Full Legal Name',
+            fieldType: 'text',
+            vaultLabel: 'Full Legal Name',
+            vaultValue: 'Alex Morgan',
+            valueToFill: 'Alex Morgan',
+            confidence: 98,
+            docName: 'Passport_Alex_Morgan.pdf',
+            enabled: true
+          },
+          {
+            autodoxId: 'ad_mock_2',
+            fieldLabel: 'Email Address',
+            fieldType: 'email',
+            vaultLabel: 'Email Address',
+            vaultValue: 'alex.morgan@example.com',
+            valueToFill: 'alex.morgan@example.com',
+            confidence: 95,
+            docName: 'W2_Tax_Summary_2025.pdf',
+            enabled: true
+          },
+          {
+            autodoxId: 'ad_mock_3',
+            fieldLabel: 'Phone Number',
+            fieldType: 'tel',
+            vaultLabel: 'Phone Number',
+            vaultValue: '+1 (555) 019-2834',
+            valueToFill: '+1 (555) 019-2834',
+            confidence: 95,
+            docName: 'W2_Tax_Summary_2025.pdf',
+            enabled: true
+          },
+          {
+            autodoxId: 'ad_mock_4',
+            fieldLabel: 'Current Employer',
+            fieldType: 'text',
+            vaultLabel: 'Employer Name',
+            vaultValue: 'Acme Technologies Inc.',
+            valueToFill: 'Acme Technologies Inc.',
+            confidence: 90,
+            docName: 'W2_Tax_Summary_2025.pdf',
+            enabled: true
+          },
+          {
+            autodoxId: 'ad_mock_5',
+            fieldLabel: 'Street Address',
+            fieldType: 'text',
+            vaultLabel: 'Postal Address',
+            vaultValue: '742 Evergreen Terrace, Springfield, OR',
+            valueToFill: '742 Evergreen Terrace',
+            confidence: 88,
+            docName: 'W2_Tax_Summary_2025.pdf',
+            enabled: true
+          }
+        ];
+
+        setInspectionResult({
           status: 'SUCCESS',
-          count: 5,
-          fieldsSummary: [
-            { id: 'f_name', name: 'firstName', placeholder: 'First Name', type: 'text' },
-            { id: 'l_name', name: 'lastName', placeholder: 'Last Name', type: 'text' },
-            { id: 'u_email', name: 'email', placeholder: 'Email Address', type: 'email' },
-            { id: 'u_addr', name: 'address', placeholder: 'Street Address', type: 'text' },
-            { id: 'u_phone', name: 'phone', placeholder: 'Phone Number', type: 'tel' }
+          totalFields: 7,
+          matchedCount: 5,
+          matchedMappings: mockMappings,
+          unmatchedFields: [
+            { label: 'Referral Code', type: 'text' },
+            { label: 'Additional Comments', type: 'textarea' }
           ]
         });
-      }, 500);
+        setMappings(mockMappings);
+      }, 400);
     }
   };
+
+  // Toggle field mapping inclusion
+  const handleToggleMapping = (index) => {
+    setMappings((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], enabled: !next[index].enabled };
+      return next;
+    });
+  };
+
+  // Change mapped attribute manually
+  const handleChangeAttribute = (mappingIndex, attributeKey) => {
+    const selectedAttr = flatVaultAttributes.find((a) => a.key === attributeKey);
+    if (!selectedAttr) return;
+
+    setMappings((prev) => {
+      const next = [...prev];
+      next[mappingIndex] = {
+        ...next[mappingIndex],
+        vaultKey: selectedAttr.key,
+        vaultLabel: selectedAttr.label,
+        vaultValue: selectedAttr.value,
+        valueToFill: selectedAttr.value,
+        docName: selectedAttr.docName || 'Vault'
+      };
+      return next;
+    });
+  };
+
+  // Toggle in-page highlights
+  const handleToggleHighlight = () => {
+    const nextVal = !highlightInputs;
+    setHighlightInputs(nextVal);
+
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0) return;
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: 'AUTODOX_HIGHLIGHT_FIELDS',
+          enable: nextVal,
+          mappings: mappings.filter((m) => m.enabled)
+        });
+      });
+    }
+  };
+
+  // Execute Autofill
+  const handleExecuteAutofill = () => {
+    const activeMappings = mappings.filter((m) => m.enabled);
+    if (activeMappings.length === 0) {
+      setAutofillStatus({ type: 'error', message: 'No fields selected for autofill' });
+      return;
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0) return;
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          {
+            type: 'AUTODOX_EXECUTE_AUTOFILL',
+            mappings: activeMappings
+          },
+          (response) => {
+            if (response && response.status === 'SUCCESS') {
+              setHasAutofilled(true);
+              setAutofillStatus({
+                type: 'success',
+                message: `Successfully filled ${response.filledCount} field(s) safely into the form!`
+              });
+            } else {
+              setAutofillStatus({
+                type: 'error',
+                message: 'Failed to write fields into page'
+              });
+            }
+          }
+        );
+      });
+    } else {
+      // Mock execution
+      setHasAutofilled(true);
+      setAutofillStatus({
+        type: 'success',
+        message: `Successfully simulated autofill of ${activeMappings.length} field(s)!`
+      });
+    }
+  };
+
+  // Execute Undo
+  const handleExecuteUndo = () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0) return;
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          { type: 'AUTODOX_UNDO_AUTOFILL' },
+          (response) => {
+            if (response && response.status === 'SUCCESS') {
+              setHasAutofilled(false);
+              setAutofillStatus({
+                type: 'success',
+                message: `Reverted ${response.revertedCount} field(s) to original state.`
+              });
+            }
+          }
+        );
+      });
+    } else {
+      setHasAutofilled(false);
+      setAutofillStatus({
+        type: 'success',
+        message: 'Reverted form fields to original state.'
+      });
+    }
+  };
+
+  // Open interactive demo form
+  const handleOpenDemo = () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) {
+      chrome.tabs.create({ url: chrome.runtime.getURL('demo-form.html') });
+    } else {
+      window.open('/demo-form.html', '_blank');
+    }
+  };
+
+  const enabledCount = mappings.filter((m) => m.enabled).length;
 
   return (
     <div className="view-container autofill-view">
@@ -107,20 +331,30 @@ export default function AutofillAssistantView() {
             <Globe size={15} className="globe-icon" />
             <span className="domain-label">{activeTabInfo.domain}</span>
           </div>
-          <button 
-            className="refresh-tab-btn" 
-            onClick={checkActiveTabConnection}
-            title="Refresh Tab Connection"
-          >
-            <RefreshCw size={13} />
-          </button>
+          <div className="tab-actions-right">
+            <button 
+              className="refresh-tab-btn" 
+              onClick={checkActiveTabConnection}
+              title="Refresh Tab Connection"
+            >
+              <RefreshCw size={13} />
+            </button>
+            <button
+              className="demo-link-btn"
+              onClick={handleOpenDemo}
+              title="Open Test Form in new tab"
+            >
+              <ExternalLink size={12} />
+              <span>Test Form</span>
+            </button>
+          </div>
         </div>
 
         <div className="connection-status-row">
           {contentScriptStatus === 'connected' ? (
             <div className="status-badge connected">
               <CheckCircle2 size={13} />
-              <span>Isolated Content Script: Connected</span>
+              <span>Isolated DOM Bridge Connected</span>
             </div>
           ) : contentScriptStatus === 'checking' ? (
             <div className="status-badge pending">
@@ -129,79 +363,194 @@ export default function AutofillAssistantView() {
           ) : (
             <div className="status-badge standby">
               <AlertCircle size={13} />
-              <span>Standby (Navigate to an HTTP/HTTPS page)</span>
+              <span>Standby — Open any web form or click Test Form</span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Test Form Detection Button */}
-      <div className="test-assistant-card">
-        <div className="assistant-card-body">
-          <div className="assistant-title-row">
+      {/* Main Inspection & Scan Action */}
+      <div className="scan-trigger-card">
+        <div className="scan-card-header">
+          <div className="scan-title-group">
             <SearchCode size={18} className="assistant-spark-icon" />
-            <span className="card-subtitle-bold">Form Input Inspection</span>
+            <div>
+              <span className="card-subtitle-bold">Smart Form Inspector</span>
+              <p className="card-explainer">
+                Scans visible input fields and matches them against your encrypted Vault.
+              </p>
+            </div>
           </div>
-          <p className="card-explainer">
-            Safely queries the active page for interactive input fields without harvesting user data.
-          </p>
-          <button 
-            className="inspect-btn-primary"
-            onClick={handleTestFieldInspection}
-            disabled={isInspecting}
-          >
-            {isInspecting ? 'Inspecting page inputs...' : 'Inspect Page Form Fields'}
-          </button>
         </div>
 
-        {formFieldInspection && (
-          <div className="inspection-result-box">
-            <div className="result-header">
-              <span className="result-count">
-                Detected <strong>{formFieldInspection.count || 0}</strong> interactive field(s)
-              </span>
-              <span className="privacy-pill">Safe Mode</span>
-            </div>
-            {formFieldInspection.fieldsSummary && formFieldInspection.fieldsSummary.length > 0 && (
-              <div className="field-chips-wrap">
-                {formFieldInspection.fieldsSummary.map((f, i) => (
-                  <span key={i} className="field-chip">
-                    {f.placeholder || f.name || f.id} ({f.type})
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <button 
+          className="inspect-btn-primary"
+          onClick={handleInspectAndMatch}
+          disabled={isInspecting}
+        >
+          {isInspecting ? (
+            <>
+              <RefreshCw size={15} className="spin-icon" />
+              <span>Analyzing Page Fields...</span>
+            </>
+          ) : (
+            <>
+              <Wand2 size={15} />
+              <span>{inspectionResult ? 'Re-scan Page Fields' : 'Scan & Match Form Fields'}</span>
+            </>
+          )}
+        </button>
       </div>
 
-      {/* Safety & Confirmation Controls */}
+      {/* Status Alert Banner */}
+      {autofillStatus && (
+        <div className={`autofill-feedback-alert ${autofillStatus.type}`}>
+          {autofillStatus.type === 'success' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+          <span>{autofillStatus.message}</span>
+        </div>
+      )}
+
+      {/* Field Inspection & Matching Results */}
+      {inspectionResult && (
+        <div className="matching-results-container">
+          <div className="match-stats-banner">
+            <div className="stat-pill">
+              <span className="stat-num">{inspectionResult.totalFields}</span>
+              <span className="stat-label">Page Inputs</span>
+            </div>
+            <div className="stat-pill highlight">
+              <span className="stat-num">{mappings.length}</span>
+              <span className="stat-label">Matched</span>
+            </div>
+            <div className="stat-pill success">
+              <span className="stat-num">{enabledCount}</span>
+              <span className="stat-label">Ready to Fill</span>
+            </div>
+          </div>
+
+          {mappings.length > 0 ? (
+            <div className="field-mappings-list">
+              <div className="mappings-list-header">
+                <span className="header-col-title">Detected Field &rarr; Vault Mapping</span>
+                <span className="header-col-counter">{enabledCount} selected</span>
+              </div>
+
+              {mappings.map((mapping, idx) => (
+                <div key={idx} className={`mapping-card ${mapping.enabled ? 'active' : 'disabled'}`}>
+                  <div className="mapping-card-top">
+                    <label className="checkbox-wrap">
+                      <input
+                        type="checkbox"
+                        checked={mapping.enabled}
+                        onChange={() => handleToggleMapping(idx)}
+                      />
+                      <span className="field-target-label">
+                        {mapping.fieldLabel || mapping.fieldName || mapping.fieldId}
+                      </span>
+                    </label>
+                    <span className="confidence-pill">
+                      {mapping.confidence}% Match
+                    </span>
+                  </div>
+
+                  <div className="mapping-card-bottom">
+                    <div className="mapped-value-preview">
+                      <span className="preview-label">Value:</span>
+                      <strong className="preview-val">{mapping.valueToFill}</strong>
+                    </div>
+
+                    <div className="source-doc-tag">
+                      <FileCheck2 size={11} />
+                      <span>{mapping.docName || 'Vault'}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="no-matches-box">
+              <AlertCircle size={18} />
+              <p>No direct matches found for this page's form fields from your Vault.</p>
+            </div>
+          )}
+
+          {/* Unmatched fields accordion */}
+          {inspectionResult.unmatchedFields && inspectionResult.unmatchedFields.length > 0 && (
+            <div className="unmatched-accordion">
+              <button 
+                className="unmatched-toggle-btn"
+                onClick={() => setShowUnmatched(!showUnmatched)}
+              >
+                <span>Unmatched Fields ({inspectionResult.unmatchedFields.length})</span>
+                {showUnmatched ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {showUnmatched && (
+                <div className="unmatched-chips-list">
+                  {inspectionResult.unmatchedFields.map((f, i) => (
+                    <span key={i} className="unmatched-chip">
+                      {f.label || f.name || f.id} ({f.type})
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Action CTAs */}
+          <div className="autofill-cta-group">
+            <button 
+              className="autofill-btn-primary"
+              onClick={handleExecuteAutofill}
+              disabled={enabledCount === 0}
+            >
+              <Zap size={16} />
+              <span>Autofill {enabledCount} Matched Fields</span>
+            </button>
+
+            {hasAutofilled && (
+              <button 
+                className="autofill-btn-undo"
+                onClick={handleExecuteUndo}
+                title="Undo last autofill action and restore form values"
+              >
+                <RotateCcw size={14} />
+                <span>Undo Autofill</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Safety & Real-Time In-Page Toggles */}
       <div className="section-block">
-        <h3 className="section-title">Autofill Safety Policies</h3>
+        <h3 className="section-title">
+          <SlidersHorizontal size={13} />
+          <span>In-Page Assistance Controls</span>
+        </h3>
         
         <div className="toggle-setting-row">
           <div className="setting-label-col">
+            <span className="setting-main-label">Highlight Matched Fields on Page</span>
+            <span className="setting-sub-label">Glowing blue outlines on detected webpage inputs</span>
+          </div>
+          <button 
+            className={`toggle-switch ${highlightInputs ? 'active' : ''}`}
+            onClick={handleToggleHighlight}
+          >
+            {highlightInputs ? <ToggleRight size={24} className="toggle-on" /> : <ToggleLeft size={24} className="toggle-off" />}
+          </button>
+        </div>
+
+        <div className="toggle-setting-row">
+          <div className="setting-label-col">
             <span className="setting-main-label">Require Confirmation Before Fill</span>
-            <span className="setting-sub-label">Preview values before writing to inputs</span>
+            <span className="setting-sub-label">Preview mapped values before writing to inputs</span>
           </div>
           <button 
             className={`toggle-switch ${requireConfirm ? 'active' : ''}`}
             onClick={() => setRequireConfirm(!requireConfirm)}
           >
             {requireConfirm ? <ToggleRight size={24} className="toggle-on" /> : <ToggleLeft size={24} className="toggle-off" />}
-          </button>
-        </div>
-
-        <div className="toggle-setting-row">
-          <div className="setting-label-col">
-            <span className="setting-main-label">Highlight Matched Fields</span>
-            <span className="setting-sub-label">Visual blue outline on detected fields</span>
-          </div>
-          <button 
-            className={`toggle-switch ${highlightInputs ? 'active' : ''}`}
-            onClick={() => setHighlightInputs(!highlightInputs)}
-          >
-            {highlightInputs ? <ToggleRight size={24} className="toggle-on" /> : <ToggleLeft size={24} className="toggle-off" />}
           </button>
         </div>
 

@@ -145,7 +145,7 @@ export default function Popup() {
           />
         )}
         {activeTab === 'autofill' && (
-          <AutofillAssistantView />
+          <AutofillAssistantView vaultDocuments={vaultDocuments} />
         )}
         {activeTab === 'privacy' && (
           <PrivacySettingsView 
